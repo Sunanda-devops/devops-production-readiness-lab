@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Safe documentation examples"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)terraform\.tfvars\.example$'''
+]
