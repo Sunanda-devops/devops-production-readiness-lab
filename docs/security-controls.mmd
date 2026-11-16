@@ -1,0 +1,17 @@
+flowchart TB
+    Source[Source changes] --> Scan[Secret and vulnerability scans]
+    Scan --> Image[Immutable container image]
+    Image --> Runtime[Restricted Kubernetes runtime]
+    Runtime --> Network[Private subnets and controlled egress]
+    Runtime --> Identity[IRSA / least-privilege pod identity]
+    Runtime --> Observe[Health probes, metrics, logs]
+
+    subgraph RuntimeControls[Runtime controls]
+      NonRoot[runAsNonRoot]
+      NoPrivilege[No privilege escalation]
+      ReadOnly[Read-only root filesystem]
+      DropCaps[Drop ALL capabilities]
+      Seccomp[RuntimeDefault seccomp]
+      NoToken[No service-account token automount]
+    end
+    Runtime --> RuntimeControls

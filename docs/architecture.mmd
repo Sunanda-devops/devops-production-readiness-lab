@@ -1,0 +1,31 @@
+flowchart LR
+    Dev[Developer] -->|Pull request / push| GitHub[GitHub repository]
+    GitHub --> Actions[GitHub Actions]
+    Actions --> Tests[Tests + Ruff + Bandit]
+    Actions --> Secrets[Gitleaks]
+    Actions --> FS[Trivy filesystem]
+    Actions --> Build[BuildKit container build]
+    Build --> ImageScan[Trivy image scan]
+    Build --> GHCR[GHCR immutable SHA tag]
+    GHCR --> Deploy[Manual protected deployment]
+
+    subgraph AWS[AWS account]
+      VPC[VPC]
+      Public[Public subnets]
+      Private[Private subnets]
+      NAT[NAT Gateway]
+      EKS[EKS control plane]
+      Nodes[Managed node group]
+      Pods[Kubernetes pods]
+      VPC --> Public
+      VPC --> Private
+      Private --> NAT
+      EKS --> Nodes
+      Nodes --> Pods
+      Pods -->|Outbound only| NAT
+    end
+
+    Terraform[Terraform] --> VPC
+    Terraform --> EKS
+    Deploy --> Pods
+    Pods -->|/health /ready /metrics| Monitor[Prometheus / Grafana]

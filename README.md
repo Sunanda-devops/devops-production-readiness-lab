@@ -1,82 +1,167 @@
 # DevOps Production Readiness Lab
 
-A production-oriented reference project for an AWS DevOps workflow. It packages a small Flask health service with Docker, Terraform-managed AWS foundations, Kubernetes manifests for EKS, and GitHub Actions quality and security gates.
+[![CI/CD](https://github.com/Sunanda-devops/devops-production-readiness-lab/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Sunanda-devops/devops-production-readiness-lab/actions/workflows/ci-cd.yml)
 
-## What is included
+A working AWS DevOps reference implementation that takes a small Flask service through testing, security scanning, container packaging, GHCR publishing, Terraform infrastructure, and Kubernetes deployment. The repository is designed as a portfolio-quality lab: it is runnable locally without AWS, while the cloud path remains explicit, reviewable, and safe to apply deliberately.
 
-- **Application:** Python 3.12 Flask service with `/`, `/health`, and `/ready` endpoints.
-- **Quality:** pytest, Ruff, and Bandit checks.
-- **Containerization:** non-root multi-stage Docker image and Compose for local execution.
-- **Infrastructure:** Terraform for an EKS cluster, managed node group, VPC, and OIDC provider using the `terraform-aws-modules` modules.
-- **Kubernetes:** namespace, ConfigMap, Deployment, Service, PodDisruptionBudget, and optional Ingress with probes and restrictive security context.
-- **CI/CD:** GitHub Actions for tests, Gitleaks, Terraform validation, Trivy filesystem and image scanning, and a manually enabled deployment job.
+## Architecture at a glance
+
+![DevOps delivery architecture](docs/architecture.png)
+
+The delivery path is:
+
+```text
+Developer -> GitHub -> GitHub Actions -> tests and security gates -> GHCR -> protected EKS deployment
+```
+
+Terraform provisions the AWS foundation. Kubernetes runs the application with health probes, resource controls, and a restricted security context. Prometheus-compatible metrics are available at `/metrics`.
+
+See the editable diagram sources in [`docs/architecture.mmd`](docs/architecture.mmd) and [`docs/security-controls.mmd`](docs/security-controls.mmd).
+
+## What is actually implemented
+
+- Flask service with `/`, `/health`, `/ready`, `/metrics`, request IDs, structured 404 responses, and operational logging.
+- Five automated tests covering service metadata, health, readiness, metrics, and error tracing.
+- Ruff linting and Bandit static security analysis.
+- Multi-stage, non-root Docker image with a health check.
+- Hardened Docker Compose profile with read-only filesystem, dropped capabilities, and `no-new-privileges`.
+- Terraform modules for a VPC, public/private subnets, NAT Gateway, EKS control plane, managed node group, and IRSA/OIDC.
+- Kubernetes namespace, ConfigMap, Deployment, Service, PodDisruptionBudget, probes, resource limits, and optional TLS Ingress.
+- GitHub Actions jobs for tests, Terraform validation, Gitleaks, Trivy filesystem scanning, container build, Trivy image scanning, GHCR publishing, and protected manual deployment.
+- Helm packaging, a Jenkins pipeline equivalent, Prometheus ServiceMonitor guidance, and an operations/backup recovery pattern.
+- Documentation for installation, configuration, troubleshooting, security review, and contribution standards.
+
+## Service screenshot
+
+![Running service response](docs/screenshots/service-home.png)
+
+The screenshot is captured from the locally running service. Use the commands below to reproduce it.
 
 ## Quick start
 
+### Prerequisites
+
+For the local application path, install Python 3.12+ and Git. Docker Engine with Compose v2 is optional. Terraform, AWS CLI, kubectl, and Helm are only required for the AWS/EKS path.
+
+### Run and test locally
+
 ```bash
+git clone https://github.com/Sunanda-devops/devops-production-readiness-lab.git
+cd devops-production-readiness-lab
 cp .env.example .env
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest -q
-ruff check .
-bandit -r app -ll
+make check
 python -m app.app
 ```
 
-The service listens on `http://localhost:8080` by default.
-
-### Docker
+Open `http://localhost:8080/`, or check the operational endpoints:
 
 ```bash
-docker compose up --build
-curl http://localhost:8080/health
+curl -i http://localhost:8080/health
+curl -i http://localhost:8080/ready
+curl http://localhost:8080/metrics
 ```
 
-The image runs as an unprivileged user and accepts configuration through environment variables. Never commit `.env` files or real credentials.
+### Run with Docker Compose
 
-## AWS and EKS deployment
+```bash
+cp .env.example .env
+docker compose up --build
+curl http://localhost:8080/health
+docker compose down
+```
 
-1. Configure AWS credentials outside the repository using a secure mechanism such as GitHub OIDC, an AWS profile, or a workload identity provider.
-2. Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars` and set values for your account and region. The `.gitignore` excludes `*.tfvars` except the example file.
-3. Review the plan carefully, then run:
+The image runs as the unprivileged `app` user. Local `.env` files, Terraform state, and plans are ignored by Git.
+
+## Configuration
+
+The main application settings are:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_VERSION` | `0.1.0` | Version reported by `/`. |
+| `ENVIRONMENT` | `local` | Environment label reported by `/`. |
+| `PORT` | `8080` | Local listening port. |
+| `LOG_LEVEL` | `INFO` | Application log level. |
+
+See [`docs/configuration.md`](docs/configuration.md) for the complete configuration reference and CI/CD settings.
+
+## Helm and Jenkins alternatives
+
+The same hardened workload can be rendered and installed with Helm:
+
+```bash
+helm lint helm/production-readiness-api
+helm template production-readiness-api helm/production-readiness-api
+helm upgrade --install production-readiness-api helm/production-readiness-api \\
+  --namespace production-rollout --create-namespace \\
+  --set image.tag=<immutable-commit-sha>
+```
+
+[`Jenkinsfile`](Jenkinsfile) provides an equivalent Jenkins path for teams that use Jenkins. It runs tests, Ruff, Bandit, Gitleaks, Docker build, and Trivy image scanning; registry publishing and deployment should be added through Jenkins credentials and protected stages in the target environment.
+
+[`monitoring/servicemonitor.yaml.example`](monitoring/servicemonitor.yaml.example) integrates the `/metrics` endpoint with the Prometheus Operator. See [`docs/operations.md`](docs/operations.md) for dashboards, alerting, logging, and backup/restore patterns.
+
+## Terraform and EKS
+
+Terraform uses version-constrained AWS modules to create a VPC and EKS platform. Worker nodes run in private subnets, the EKS public API endpoint is disabled by default, and IRSA is enabled for pod-level AWS identity.
+
+Validate the configuration without provisioning resources:
 
 ```bash
 cd terraform
-terraform init
-terraform fmt -check
+terraform init -backend=false
+terraform fmt -check -recursive
 terraform validate
+terraform plan -var-file=terraform.tfvars.example
+```
+
+To provision an environment, copy `terraform.tfvars.example` to an untracked `terraform.tfvars`, review a saved plan, and apply it only after confirming AWS account, cost, IAM, network, encryption, and retention requirements. The modules create paid resources.
+
+```bash
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-4. Configure `kubectl` from the Terraform outputs, update the image reference in `k8s/deployment.yaml`, and apply the manifests:
+Use an encrypted remote backend with locking for shared or production state. Never commit state, plans, credentials, or kubeconfig files.
 
-```bash
-aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
-kubectl apply -f k8s/
-kubectl -n production-rollout rollout status deployment/production-readiness-api
+## CI/CD pipeline
+
+Every pull request and push runs tests, linting, Bandit, Terraform validation, Gitleaks, and Trivy filesystem scanning. The container job builds the image and scans the same immutable commit-SHA tag that is published on `main`:
+
+```text
+ghcr.io/sunanda-devops/production-readiness-api:<commit-sha>
 ```
 
-The Terraform module creates paid AWS resources. Review cost, network, IAM, encryption, and retention requirements before applying in a real account. Destroying the stack is also a deliberate action: `terraform destroy`.
+The optional deployment job is manual and protected by a `production` environment. Prefer GitHub OIDC and short-lived AWS credentials for production; the lab documents `KUBE_CONFIG_B64` only as a temporary fallback.
 
-## GitHub Actions setup
+## Troubleshooting
 
-Every push and pull request runs tests, linting, Bandit, Terraform formatting/validation, Gitleaks, and Trivy filesystem scanning. A container is built and scanned with Trivy before any deployment.
+Common scenarios are documented in [`docs/troubleshooting.md`](docs/troubleshooting.md), including:
 
-For the optional manual deployment path, configure these repository settings only after reviewing the workflow:
+- Python import and virtual-environment problems.
+- Port conflicts.
+- Docker daemon failures.
+- Gitleaks and Trivy findings.
+- Terraform provider initialization errors.
+- EKS scheduling and readiness failures.
 
-- Repository variable `DEPLOY_ENABLED=true`.
-- Repository or environment secret `KUBE_CONFIG_B64` containing a base64-encoded, short-lived kubeconfig.
-- A protected GitHub environment named `production` with required reviewers.
+## Security posture and next steps
 
-The workflow does not contain cloud credentials or a cluster endpoint. Prefer GitHub OIDC and short-lived AWS credentials for a production implementation.
+The repository starts with no embedded credentials, secret scanning, vulnerability scanning, non-root containers, restricted Kubernetes pods, private worker subnets, disabled public EKS API access, and health/readiness contracts.
 
-## Repository conventions
+Before production, complete the actions in [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md): integrate a secret manager, use OIDC-based deployment, inspect generated security-group rules, add network policies and TLS ingress, enable centralized logs and alerts, sign images, enforce admission policies, and test backup/disaster-recovery procedures.
 
-- Keep secrets in a secret manager or CI secret store; use `.env.example` only for names and safe examples.
-- Pin or regularly review third-party GitHub Actions and container base image versions.
-- Add an issue and pull request review for infrastructure changes.
-- Run `make check` before opening a pull request.
+## Repository guide
 
-See [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md) for the threat model and planned hardening work.
+- [`docs/installation.md`](docs/installation.md) — local, Docker, Terraform, and EKS setup.
+- [`docs/configuration.md`](docs/configuration.md) — environment variables and CI/CD settings.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — failure scenarios and recovery steps.
+- [`docs/resume-alignment.md`](docs/resume-alignment.md) — what the latest resume is evidenced by this repository and what belongs to other projects.
+- [`docs/operations.md`](docs/operations.md) — observability and recovery guidance.
+- [`docs/architecture.mmd`](docs/architecture.mmd) — editable architecture diagram source.
+- [`docs/security-controls.mmd`](docs/security-controls.mmd) — editable security-control diagram source.
+- [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md) — findings and production hardening plan.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution and review workflow.

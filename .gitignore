@@ -13,3 +13,4 @@ __pycache__/
 !*.tfvars.example
 *.tfplan
 .DS_Store
+docs/screenshots/*.tmp

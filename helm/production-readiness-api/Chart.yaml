@@ -1,0 +1,6 @@
+apiVersion: v2
+name: production-readiness-api
+description: Production-readiness Flask service deployment
+version: 0.1.0
+appVersion: "0.1.0"
+type: application

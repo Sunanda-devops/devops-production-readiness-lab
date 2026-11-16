@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: production-readiness-api
+  namespace: production-rollout
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: production-readiness-api
+  namespaceSelector:
+    matchNames:
+      - production-rollout
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
